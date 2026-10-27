@@ -49,11 +49,13 @@ def trim_report(report):
 def view_payload(store, state):
     route = store.resolve_view(state.get("activeThreadId"), state.get("visibleTurnIds", []))
     payload = {"viewToken": state.get("viewToken"), "viewId": state.get("activeThreadId"),
-               "sessionId": route["session_id"], "turns": [], "resolutionReason": route["reason"]}
+               "sessionId": route["session_id"], "turns": [], "currentContext": None,
+               "resolutionReason": route["reason"]}
     if route["session_id"]:
         try:
             report = store.report(route["session_id"])
             payload["turns"] = report["turns"]
+            payload["currentContext"] = report["context"]
         except (OSError, ValueError):
             payload.update(sessionId=None, resolutionReason="waiting_for_session_log")
     return payload
@@ -69,7 +71,11 @@ def view_report(store, state, request):
     if request.get("view_token") != state.get("viewToken"):
         raise ValueError("聊天已切换，请重新悬停当前回复")
     route = store.resolve_view(state.get("activeThreadId"), state.get("visibleTurnIds", []))
-    if not route["session_id"] or request.get("session_id") != route["session_id"] or not request.get("turn_id"):
+    if not route["session_id"] or request.get("session_id") != route["session_id"]:
+        raise ValueError("无法确认这条消息所属的会话和轮次")
+    if request.get("kind") == "current_report":
+        return trim_report(store.report(route["session_id"]))
+    if not request.get("turn_id"):
         raise ValueError("无法确认这条消息所属的会话和轮次")
     return trim_report(store.report(route["session_id"], request["turn_id"]))
 

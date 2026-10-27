@@ -3,6 +3,7 @@
   const key = '__codexContextLens';
   if (window[key]) return { installed: true, reused: true };
   const marker = 'data-context-lens-button';
+  const currentMarker = 'data-context-lens-current';
   const scopeMarker = 'data-context-lens-hover-scope', scopes = new Set();
   const buttonStyle = document.createElement('style');
   buttonStyle.id = 'codex-context-lens-button-style';
@@ -12,12 +13,25 @@
     button[${marker}]:hover,button[${marker}]:focus-visible{background:color-mix(in srgb,currentColor 8%,transparent);opacity:1}
     button[${marker}] svg{width:16px;height:16px;display:block;flex-shrink:0}
     button[${marker}] [data-context-lens-percentage]{font-variant-numeric:tabular-nums}
+    button[${currentMarker}]{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:32px;padding:7px 12px;border:0;border-top:1px solid light-dark(#edf0f2,#3b3f45);border-radius:0;background:light-dark(#fafbfb,#26282d);color:light-dark(#48515a,#d2d7dc);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+    button[${currentMarker}]:hover,button[${currentMarker}]:focus-visible{background:light-dark(#f3f5f5,#30333a)}
+    button[${currentMarker}] .context-lens-current-main{display:flex;align-items:center;gap:9px;min-width:0;white-space:nowrap}
+    button[${currentMarker}] .context-lens-current-value{font-weight:700;font-variant-numeric:tabular-nums;color:#35816a}
+    button[${currentMarker}][data-level="watch"] .context-lens-current-value,button[${currentMarker}][data-level="watch"] .context-lens-current-hint{color:#ae771d}
+    button[${currentMarker}][data-level="high"] .context-lens-current-value,button[${currentMarker}][data-level="high"] .context-lens-current-hint{color:#b7473b}
+    button[${currentMarker}] .context-lens-current-track{width:94px;height:5px;flex:none;border-radius:5px;background:light-dark(#dce1e3,#4b4f56);overflow:hidden}
+    button[${currentMarker}] .context-lens-current-fill{display:block;height:100%;border-radius:5px;background:#35816a}
+    button[${currentMarker}][data-level="watch"] .context-lens-current-fill{background:#ae771d}
+    button[${currentMarker}][data-level="high"] .context-lens-current-fill{background:#b7473b}
+    button[${currentMarker}] .context-lens-current-hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+    @media(max-width:520px){button[${currentMarker}] .context-lens-current-track{width:50px}button[${currentMarker}] .context-lens-current-hint{max-width:120px}}
   `;
   document.head.append(buttonStyle);
   let state = { sessionId: null, viewToken: null, turns: [] }, activeButton = null, pinned = false;
   let turnIndex = new Map(), requestedViewToken = null;
   let closeTimer = null, openTimer = null, scanTimer = null, sequence = 0;
   let diagnostics = { candidates: 0, matchedTurns: 0, actionRows: 0, reason: 'starting' };
+  let currentReason = 'starting', currentAnchor = 'none';
   const awaiting = new Map(), cache = new Map();
   const host = document.createElement('div');
   host.id = 'codex-context-lens-popover';
@@ -111,12 +125,13 @@
       el('span', 'foot-time', c.usage_timestamp ? new Date(c.usage_timestamp).toLocaleTimeString('zh-CN', { hour12: false }) : '等待日志'));
     panel.append(foot);
   }
-  function ask(turnId) {
+  function ask(turnId, current = false) {
     const id = ++sequence;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { awaiting.delete(id); reject(new Error('本地插件暂未连接')); }, 6000);
       awaiting.set(id, { resolve, reject, timer });
-      window.__contextLensRequest(JSON.stringify({ id, session_id: state.sessionId, turn_id: turnId, view_token: state.viewToken }));
+      window.__contextLensRequest(JSON.stringify({ id, kind: current ? 'current_report' : 'turn_report',
+        session_id: state.sessionId, turn_id: turnId, view_token: state.viewToken }));
     });
   }
   async function show(button) {
@@ -127,9 +142,10 @@
     activeButton = button;
     button.setAttribute('aria-expanded', 'true'); host.style.display = 'block';
     panel.replaceChildren(el('div', 'title', '上下文明细'), el('div', 'note', '正在读取本地记录…')); place();
-    const identity = `${state.sessionId}:${button.dataset.turnId}`;
+    const current = button.getAttribute(currentMarker) !== null;
+    const identity = `${state.sessionId}:${current ? `current:${state.currentContext?.usage_line}` : button.dataset.turnId}`;
     try {
-      const hit = cache.get(identity), report = hit && Date.now() - hit.time < 3000 ? hit.report : await ask(button.dataset.turnId);
+      const hit = cache.get(identity), report = hit && Date.now() - hit.time < 3000 ? hit.report : await ask(button.dataset.turnId, current);
       if (state.viewToken !== startedView || !window.__codexContextLensMatching.acceptsView(state, describeView())) return;
       cache.set(identity, { report, time: Date.now() });
       if (activeButton === button) { render(report); place(); }
@@ -141,6 +157,52 @@
     const keys = [container.getAttribute('data-turn-key'), node.getAttribute('data-content-search-assistant-turn-key'), node.id].filter(Boolean);
     return window.__codexContextLensMatching.matchTurn(keys, turnId ? '' : node.textContent, state.turns, turnId, turnIndex);
   }
+  function clearCurrent() {
+    const button = document.querySelector(`[${currentMarker}]`);
+    if (button === activeButton) hide();
+    button?.remove();
+    currentAnchor = 'none';
+  }
+  function mountCurrent(view) {
+    const candidates = Array.from(document.querySelectorAll('[data-conversation-id]')).filter(visible);
+    const normalize = id => String(id || '').replace(/^local:/, '');
+    const matching = candidates.filter(node => normalize(node.getAttribute('data-conversation-id')) === normalize(view.activeThreadId));
+    const composer = matching.length === 1 ? matching[0] : candidates.length === 1 ? candidates[0] : null;
+    const editors = Array.from(document.querySelectorAll('[contenteditable], textarea, [role="textbox"]'))
+      .filter(node => visible(node) && node.getAttribute('contenteditable') !== 'false')
+      .filter(node => { const rect = node.getBoundingClientRect(); return rect.width >= 180 && rect.bottom > innerHeight / 2; });
+    const editor = !composer && (view.activeThreadId || view.visibleTurnIds.length) ? editors.at(-1) : null;
+    const context = state.currentContext;
+    if (!composer && !editor) { currentReason = 'no_composer'; clearCurrent(); return; }
+    const host = editor ? (editor.closest('form') || editor.parentElement) :
+      composer.getAttribute('contenteditable') !== null || ['TEXTAREA', 'INPUT'].includes(composer.tagName)
+        ? composer.parentElement : (composer.querySelector('form') || composer);
+    if (!host) { currentReason = 'no_composer'; clearCurrent(); return; }
+    let button = document.querySelector(`[${currentMarker}]`);
+    if (button && button.parentElement !== host) { clearCurrent(); button = null; }
+    if (!button) {
+      button = document.createElement('button'); button.type = 'button'; button.setAttribute(currentMarker, '');
+      button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-label', '查看当前会话上下文用量');
+      const main = el('span', 'context-lens-current-main'), label = el('span', '', '上下文');
+      const value = el('span', 'context-lens-current-value'), track = el('span', 'context-lens-current-track');
+      track.append(el('span', 'context-lens-current-fill'));
+      main.append(label, value, track);
+      button.append(main, el('span', 'context-lens-current-hint'));
+      button.addEventListener('click', event => { event.stopPropagation(); if (activeButton === button && pinned) hide(); else { pinned = true; show(button); } });
+      host.append(button);
+    }
+    const known = context && context.used != null && context.capacity > 0;
+    const used = known ? Math.min(100, Math.max(0, context.used / context.capacity * 100)) : 0;
+    const level = !known ? 'unknown' : used >= 85 ? 'high' : used >= 70 ? 'watch' : 'normal';
+    button.setAttribute('data-level', level);
+    button.dataset.sessionId = state.sessionId || '';
+    button.querySelector('.context-lens-current-value').textContent = known ? `${used.toFixed(0)}%` : '—';
+    button.querySelector('.context-lens-current-fill').style.width = `${used}%`;
+    button.querySelector('.context-lens-current-hint').textContent = level === 'unknown' ? '等待用量' :
+      level === 'high' ? '建议压缩或新会话' : level === 'watch' ? `剩余 ${Math.round(100 - used)}%` : '空间充足';
+    currentReason = known ? 'mounted' : 'waiting_for_usage';
+    currentAnchor = editor ? 'editor' : 'conversation_id';
+  }
   function scan() {
     scanTimer = null;
     diagnostics = { candidates: 0, matchedTurns: 0, actionRows: 0, hiddenCandidates: 0, idMatches: 0, textMatches: 0, unmatchedTurns: 0, reason: 'scanning' };
@@ -148,12 +210,12 @@
     if (!window.__codexContextLensMatching.acceptsView(state, view)) {
       diagnostics.reason = 'waiting_for_view';
       document.querySelectorAll(`[${marker}]`).forEach(n => n.remove());
-      requestView(view); return hide();
+      currentReason = 'waiting_for_view'; clearCurrent(); requestView(view); return hide();
     }
     if (!state.sessionId) {
       diagnostics.reason = state.resolutionReason || 'waiting_for_session_log';
       document.querySelectorAll(`[${marker}]`).forEach(n => n.remove());
-      return hide();
+      mountCurrent(view); return hide();
     }
     const nodes = document.querySelectorAll(selector);
     diagnostics.candidates = nodes.length;
@@ -207,11 +269,12 @@
     }
     document.querySelectorAll(`[${marker}]`).forEach(button => { if (!keep.has(button)) { if (button === activeButton) hide(); button.remove(); } });
     for (const scope of scopes) { if (!scope.isConnected || !scope.querySelector(`[${marker}]`)) { scope.removeAttribute(scopeMarker); scopes.delete(scope); } }
+    mountCurrent(view);
     diagnostics.reason = keep.size ? 'mounted' : !state.turns.length ? 'no_logged_turns' : !nodes.length ? 'no_message_nodes' : !diagnostics.actionRows ? 'no_action_rows' : 'no_turn_match';
   }
   function schedule() { if (!scanTimer) scanTimer = setTimeout(scan, 80); }
   const observer = new MutationObserver(records => {
-    if (records.some(record => !record.target.closest?.('[data-context-lens-button], #codex-context-lens-popover, #codex-context-lens-button-style'))) schedule();
+    if (records.some(record => !record.target.closest?.('[data-context-lens-button], [data-context-lens-current], #codex-context-lens-popover, #codex-context-lens-button-style'))) schedule();
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-turn-key', 'data-content-search-turn-key', 'data-conversation-id', 'data-app-action-sidebar-thread-active', 'data-app-action-sidebar-thread-id', 'hidden', 'aria-hidden', 'inert', 'class', 'style'] });
   host.addEventListener('mouseenter', () => clearTimeout(closeTimer)); host.addEventListener('mouseleave', delayedHide);
@@ -232,9 +295,10 @@
       const view = describeView(), valid = window.__codexContextLensMatching.acceptsView(state, view);
       return { ...view, boundViewToken: state.viewToken, sessionId: valid ? state.sessionId : null,
         buttons: valid ? Array.from(document.querySelectorAll(`[${marker}]`)).filter(visible).length : 0,
+        currentMounted: valid && !!document.querySelector(`[${currentMarker}]`), currentReason, currentAnchor,
         turns: valid ? state.turns.length : 0, resolutionReason: state.resolutionReason, diagnostics };
     },
-    dispose() { observer.disconnect(); clearTimeout(scanTimer); clearTimeout(closeTimer); clearTimeout(openTimer); for (const task of awaiting.values()) { clearTimeout(task.timer); task.reject(new Error('插件已停止')); } awaiting.clear(); document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onClick); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); document.querySelectorAll(`[${marker}]`).forEach(b => b.remove()); for (const scope of scopes) scope.removeAttribute(scopeMarker); scopes.clear(); buttonStyle.remove(); host.remove(); delete window[key]; }
+    dispose() { observer.disconnect(); clearTimeout(scanTimer); clearTimeout(closeTimer); clearTimeout(openTimer); for (const task of awaiting.values()) { clearTimeout(task.timer); task.reject(new Error('插件已停止')); } awaiting.clear(); document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onClick); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); document.querySelectorAll(`[${marker}]`).forEach(b => b.remove()); clearCurrent(); for (const scope of scopes) scope.removeAttribute(scopeMarker); scopes.clear(); buttonStyle.remove(); host.remove(); delete window[key]; }
   };
   return { installed: true };
 })();

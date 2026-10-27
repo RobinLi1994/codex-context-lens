@@ -168,3 +168,14 @@ class ViewRequestTests(unittest.TestCase):
         view = {'activeThreadId': 'client-new-thread:draft', 'visibleTurnIds': ['turn-a'], 'viewToken': 'window-a'}
         report = view_report(self.store, view, {'session_id': 'chat-a', 'turn_id': 'turn-a', 'view_token': 'window-a'})
         self.assertEqual(report['session']['id'], 'chat-a')
+
+    def test_current_footer_uses_latest_context_for_resolved_session(self):
+        self.session('chat-a', ['turn-a', 'turn-b'])
+        view = {'activeThreadId': 'chat-a', 'visibleTurnIds': ['turn-a', 'turn-b'], 'viewToken': 'window-a'}
+        payload = view_payload(self.store, view)
+        self.assertEqual(payload['currentContext']['used'], 100)
+        self.assertEqual(payload['currentContext']['capacity'], 10000)
+        report = view_report(self.store, view, {
+            'kind': 'current_report', 'session_id': 'chat-a', 'view_token': 'window-a'})
+        self.assertEqual(report['context']['used'], 100)
+        self.assertEqual(report['session']['id'], 'chat-a')

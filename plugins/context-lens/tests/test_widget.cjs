@@ -40,7 +40,7 @@ class Element {
     for (let n = this; n; n = n.parentElement) if (n.attrs.has('hidden') || n.style.display === 'none') return [];
     return this.isConnected ? [{}] : [];
   }
-  getBoundingClientRect() { return { left: 10, top: 200, bottom: 224, width: 420, height: 200 }; }
+  getBoundingClientRect() { return this.rect || { left: 10, top: 200, bottom: 224, width: 420, height: 200 }; }
   addEventListener(name, callback) { this.events[name] = callback; } removeEventListener(name) { delete this.events[name]; }
   attachShadow() { return this.shadowRoot = new Element('shadow'); }
   contains(node) { for (let n = node; n; n = n.parentElement) if (n === this) return true; return false; }
@@ -54,6 +54,10 @@ function fixture(id, turns, hiddenTurns = []) {
   sidebar.setAttribute('data-app-action-sidebar-thread-active', 'true');
   sidebar.setAttribute('data-app-action-sidebar-thread-id', 'local:' + id); body.append(sidebar);
   const chat = new Element('section'); body.append(chat);
+  const composer = new Element('div'); composer.setAttribute('data-conversation-id', 'local:' + id);
+  const editor = new Element('div'); editor.setAttribute('contenteditable', 'true');
+  editor.rect = { left: 10, top: 700, bottom: 724, width: 420, height: 24 };
+  composer.append(editor); body.append(composer);
   function replies(container, ids) {
     for (const turn of ids) {
       const wrapper = new Element('article'); wrapper.className = 'group'; wrapper.setAttribute('data-turn-key', 'local-marker-' + turn);
@@ -73,14 +77,70 @@ function fixture(id, turns, hiddenTurns = []) {
   context.window = context;
   vm.createContext(context);
   for (const file of ['matching.js', 'overlay.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../web', file), 'utf8'), context);
-  return { api: context.__codexContextLens, doc, sidebar, requests,
-    switch(id, ids) { sidebar.setAttribute('data-app-action-sidebar-thread-id', 'local:' + id); chat.replaceChildren(); replies(chat, ids); } };
+  return { api: context.__codexContextLens, doc, sidebar, composer, requests,
+    switch(id, ids) { sidebar.setAttribute('data-app-action-sidebar-thread-id', 'local:' + id); composer.setAttribute('data-conversation-id', 'local:' + id); chat.replaceChildren(); replies(chat, ids); } };
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 100));
 function payload(f, sessionId, ids) {
   return { viewToken: f.api.status().viewToken, sessionId, resolutionReason: 'turn_ids',
+    currentContext: { used: 100, capacity: 1000, percent: 10 },
     turns: ids.map(turn_id => ({ turn_id, completed: true, used: 100, capacity: 1000 })) };
 }
+
+test('composer footer stays visible and escalates at 70% and 85%', async t => {
+  const f = fixture('draft', ['one']); t.after(() => f.api.dispose());
+  const data = payload(f, 'chat', ['one']);
+  f.api.update(data); await tick();
+  const footer = f.doc.querySelector('[data-context-lens-current]');
+  assert.ok(footer);
+  assert.equal(footer.parentElement, f.composer);
+  assert.match(footer.textContent, /上下文10%/);
+  assert.equal(footer.dataset.level, 'normal');
+
+  f.api.update({ ...data, currentContext: { used: 740, capacity: 1000, percent: 74 } }); await tick();
+  assert.match(footer.textContent, /上下文74%/);
+  assert.equal(footer.dataset.level, 'watch');
+  f.api.update({ ...data, currentContext: { used: 880, capacity: 1000, percent: 88 } }); await tick();
+  assert.equal(footer.dataset.level, 'high');
+  assert.match(footer.textContent, /建议压缩或新会话/);
+});
+
+test('composer footer opens current report and clears on a chat switch', async t => {
+  const f = fixture('draft', ['one']); t.after(() => f.api.dispose());
+  const old = payload(f, 'chat-a', ['one']); f.api.update(old); await tick();
+  f.doc.querySelector('[data-context-lens-current]').events.click({ stopPropagation() {} });
+  assert.equal(f.requests.at(-1).kind, 'current_report');
+  assert.equal(f.requests.at(-1).session_id, 'chat-a');
+
+  f.switch('draft', ['two']); f.api.update(old); await tick();
+  assert.equal(f.doc.querySelector('[data-context-lens-current]'), null);
+  const next = payload(f, 'chat-b', ['two']); f.api.update(next); await tick();
+  assert.equal(f.doc.querySelector('[data-context-lens-current]').dataset.sessionId, 'chat-b');
+});
+
+test('new chat shows a waiting placeholder until its usage arrives', async t => {
+  const f = fixture('draft', []); t.after(() => f.api.dispose());
+  const waiting = { viewToken: f.api.status().viewToken, sessionId: null, turns: [],
+    currentContext: null, resolutionReason: 'waiting_for_turn_log' };
+  f.api.update(waiting); await tick();
+  const footer = f.doc.querySelector('[data-context-lens-current]');
+  assert.ok(footer);
+  assert.equal(footer.dataset.level, 'unknown');
+  assert.match(footer.textContent, /等待用量/);
+  f.api.update({ ...waiting, sessionId: 'chat', currentContext: { used: 100, capacity: 1000, percent: 10 } }); await tick();
+  assert.equal(footer.dataset.level, 'normal');
+  assert.match(footer.textContent, /10%/);
+});
+
+test('visible bottom editor anchors current footer when composer id is absent', async t => {
+  const f = fixture('draft', ['one']); t.after(() => f.api.dispose());
+  f.composer.removeAttribute('data-conversation-id');
+  f.api.update(payload(f, 'chat', ['one'])); await tick();
+  const footer = f.doc.querySelector('[data-context-lens-current]');
+  assert.ok(footer);
+  assert.equal(footer.parentElement, f.composer);
+  assert.equal(f.api.status().currentAnchor, 'editor');
+});
 
 test('draft-only page mounts both completed replies using real session UUID', async t => {
   const f = fixture('client-new-thread:draft', ['one', 'two']); t.after(() => f.api.dispose());
@@ -125,7 +185,7 @@ test('unknown log owner waits, then mounts when a later payload resolves it', as
   f.api.update(payload(f, 'new-real-chat', ['pending'])); await tick(); assert.equal(f.api.status().buttons, 1);
 });
 test('visible real turns work without any composer or sidebar session marker', async t => {
-  const f = fixture('unused', ['real-turn']); t.after(() => f.api.dispose()); f.sidebar.remove();
+  const f = fixture('unused', ['real-turn']); t.after(() => f.api.dispose()); f.sidebar.remove(); f.composer.remove();
   assert.equal(f.api.status().activeThreadId, null);
   f.api.update(payload(f, 'real-chat', ['real-turn'])); await tick();
   assert.equal(f.api.status().sessionId, 'real-chat'); assert.equal(f.api.status().buttons, 1);
