@@ -4,16 +4,16 @@
 
 <h1 align="center">Codex Context Lens</h1>
 
-<p align="center"><strong>输入框下方看当前占用，回复旁看历史明细。</strong></p>
+<p align="center"><strong>输入框工具栏看当前占用，回复旁看历史明细。</strong></p>
 
 <p align="center">
   <a href="https://github.com/Cloudkkk/codex-context-lens/actions/workflows/ci.yml"><img src="https://github.com/Cloudkkk/codex-context-lens/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/version-0.3.7--local-6366f1" alt="Version 0.3.7 local">
+  <img src="https://img.shields.io/badge/version-0.3.8--local-6366f1" alt="Version 0.3.8 local">
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS">
 </p>
 
-Context Lens 是一个用于 macOS Codex / ChatGPT 桌面端的第三方本地插件。此处为 0.3.7 本地定制构建：读取本机会话日志，在输入框下方常驻显示当前上下文占用，并在每条已完成回复旁保留历史用量入口。
+Context Lens 是一个用于 macOS Codex / ChatGPT 桌面端的第三方本地插件。此处为 0.3.8 本地定制构建：读取本机会话日志，在输入框底部工具栏显示当前上下文占用，并在每条已完成回复旁保留历史用量入口。
 
 <p align="center">
   <a href="#安装与使用">安装与使用</a> · <a href="#更新">更新</a> · <a href="#常见问题">常见问题</a> · <a href="CONTRIBUTING.md">贡献</a>
@@ -24,7 +24,7 @@ Context Lens 是一个用于 macOS Codex / ChatGPT 桌面端的第三方本地�
 
 ## 功能
 
-- **当前占用常驻显示**：输入框下方显示百分比与进度，70% 起变为提醒色，85% 起提示压缩或新开会话；点击查看当前明细，不自动压缩。
+- **当前占用常驻显示**：输入框底部工具栏以环形进度和百分比显示，70% 起变为提醒色，85% 起显示警戒标记并在悬停提示压缩或新开会话；点击查看当前明细，不自动压缩。
 - **消息旁直接查看**：回复操作栏时间左侧的饼图图标与百分比，hover 查看、点击固定、Esc 关闭。
 - **历史轮次回放**：每个入口对应自己的会话和轮次，旧回复显示当时的用量。
 - **上下文分类**：用户消息、助手消息、工具调用与返回、Skills、基础指令、记忆指令、压缩摘要等。
@@ -39,9 +39,9 @@ Context Lens 是一个用于 macOS Codex / ChatGPT 桌面端的第三方本地�
 
 需要 macOS Codex / ChatGPT 桌面端；优先使用应用自带 Python，也兼容本机 Python 3.9+。
 
-1. 安装此本地定制构建提供的 **`Context-Lens-0.3.7-macOS.pkg`**；上游 Release 不包含输入框常驻显示。
+1. 安装此本地定制构建提供的 **`Context-Lens-0.3.8-macOS.pkg`**；上游 Release 不包含输入框工具栏显示。
 2. 打开 Codex 的 Context Lens 插件详情，运行 **Setup** 初始化技能，等待提示和 codex 自动重启即可。
-3. 重开后，输入框下方显示当前占用；鼠标悬停回复旁的饼图按钮可查看历史用量。
+3. 重开后，输入框底部工具栏显示当前占用；鼠标悬停回复旁的饼图按钮可查看历史用量。
 
 
 注意⚠️：当前包尚未签名或公证，如果 macOS 阻止打开，需要在「系统设置 → 隐私与安全性」中允许。
@@ -77,7 +77,7 @@ Context Lens 是一个用于 macOS Codex / ChatGPT 桌面端的第三方本地�
 
 ### 已安装，但没有图标
 
-当前占用入口应显示在输入框下方；历史入口默认隐藏，需将鼠标移到已完成、有用量记录的本地回复上。检查状态时可以使用插件维护技能查看 `currentMounted`、`currentReason` 和 `buttons`；`attached` 只代表连接成功，不能代替实际界面验证。
+当前占用入口应显示在输入框底部工具栏、模型选择前；历史入口默认隐藏，需将鼠标移到已完成、有用量记录的本地回复上。检查状态时可以使用插件维护技能查看 `currentMounted`、`currentReason` 和 `buttons`；`no_toolbar` 表示未找到可靠插入位置，`attached` 只代表连接成功，不能代替实际界面验证。
 
 | 状态 | 含义 |
 | --- | --- |

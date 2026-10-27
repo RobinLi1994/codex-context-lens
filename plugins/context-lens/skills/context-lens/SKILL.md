@@ -1,9 +1,9 @@
 ---
 name: context-lens
-description: 自动启用、停止或修复 Codex 消息操作栏中的上下文悬停面板，无需独立启动器。仅处理面板维护，不用于聊天查询 token 明细。
+description: 自动启用、停止或修复 Codex 输入框工具栏和消息旁的上下文用量面板，无需独立启动器。仅处理面板维护，不用于聊天查询 token 明细。
 ---
 
-当前会话占用常驻显示在输入框下方；达到 70% 显示提醒色，达到 85% 提示压缩或新开会话，但不自动执行操作。点击常驻入口可查看当前明细。消息下方操作栏中、时间左侧的饼图按钮仍可查看历史轮次；该按钮默认隐藏，回复 hover、键盘聚焦或面板打开时显示。明细面板点击固定，Esc 关闭。
+当前会话占用显示在输入框底部工具栏、模型选择前；达到 70% 显示提醒色，达到 85% 显示红色感叹号，悬停可见压缩或新开会话建议，但不自动执行操作。点击入口可查看当前明细。消息下方操作栏中、时间左侧的饼图按钮仍可查看历史轮次；该按钮默认隐藏，回复 hover、键盘聚焦或面板打开时显示。明细面板点击固定，Esc 关闭。
 
 面板维护命令在本技能目录上两级的 `cli.py`。使用 Python 3.9+；`enable` / `start` 启动自动启用监控，`status` 查看进程和连接状态，`stop` 撤掉按钮和面板，并取消尚未执行的重开。命令优先使用 `scripts/run-python.sh` 选择应用自带 Python。启用与状态检查需使用 exec_command 的 require_escalated 权限，避免沙箱拒绝进程检查、后台监控和本机端口连接。
 
@@ -13,6 +13,6 @@ description: 自动启用、停止或修复 Codex 消息操作栏中的上下文
 
 `waiting_for_tasks` 表示重启已排队，此时简短回复并结束本轮，不能等待自己的 task_complete。`quit_cancelled`、`initialization_cancelled`、`initialization_timed_out` 或 `restart_failed` 应说明实际失败原因，不循环重启。`attached` 仅表示连接成功，未实际验证时不声称 hover 可用。
 
-`status.windows` 按 renderer 分别包含页面标识、解析后的 `resolvedSessionId`、`routingReason`、视图 token 和挂载计数。一个窗口 mounted 不代表全部聊天正常。共享监控支持多个窗口与聊天切换，不需要为每个会话运行 Setup。`currentMounted` 表示输入框下方的当前占用入口已挂载，`currentReason` 解释未挂载原因；`buttons > 0` 表示历史按钮已挂载。`diagnostics.reason` 的 `no_turn_match` 表示文案或 ID 不能唯一匹配，`no_action_rows` 表示消息操作栏结构不兼容。不要把 `attached` 当作视觉验证。
+`status.windows` 按 renderer 分别包含页面标识、解析后的 `resolvedSessionId`、`routingReason`、视图 token 和挂载计数。一个窗口 mounted 不代表全部聊天正常。共享监控支持多个窗口与聊天切换，不需要为每个会话运行 Setup。`currentMounted` 表示输入框工具栏的当前占用入口已挂载，`currentReason` 解释未挂载原因；`no_toolbar` 表示未找到可靠的工具栏位置，`buttons > 0` 表示历史按钮已挂载。`diagnostics.reason` 的 `no_turn_match` 表示文案或 ID 不能唯一匹配，`no_action_rows` 表示消息操作栏结构不兼容。不要把 `attached` 当作视觉验证。
 
 保持只读：日志默认来自 `~/.codex/sessions`，不修改日志、应用包或账户设置。面板优先读取回复祖先节点的真实轮次 ID；真实 ID 对应日志暂未到达时等待，不回退到正文。仅缺少真实 ID 时使用旧 ID 和唯一正文匹配；跳过隐藏会话。不能确定对应轮次时不挂载。输入总量来自用量事件，分类仅是可见文本估算；不要把差额解释为精确工具占用。无需添加 MCP 聊天查询工具。

@@ -67,7 +67,8 @@ def write_zip(destination, entries):
                 raise ValueError("Expected a tracked regular file: " + str(source))
             info = zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o100644 << 16
+            info.create_system = 3
+            info.external_attr = (0o100644 | (source.stat().st_mode & 0o111)) << 16
             bundle.writestr(info, source.read_bytes())
 
 

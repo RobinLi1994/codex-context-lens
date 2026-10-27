@@ -13,18 +13,16 @@
     button[${marker}]:hover,button[${marker}]:focus-visible{background:color-mix(in srgb,currentColor 8%,transparent);opacity:1}
     button[${marker}] svg{width:16px;height:16px;display:block;flex-shrink:0}
     button[${marker}] [data-context-lens-percentage]{font-variant-numeric:tabular-nums}
-    button[${currentMarker}]{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:32px;padding:7px 12px;border:0;border-top:1px solid light-dark(#edf0f2,#3b3f45);border-radius:0;background:light-dark(#fafbfb,#26282d);color:light-dark(#48515a,#d2d7dc);font:inherit;font-size:12px;text-align:left;cursor:pointer}
-    button[${currentMarker}]:hover,button[${currentMarker}]:focus-visible{background:light-dark(#f3f5f5,#30333a)}
-    button[${currentMarker}] .context-lens-current-main{display:flex;align-items:center;gap:9px;min-width:0;white-space:nowrap}
-    button[${currentMarker}] .context-lens-current-value{font-weight:700;font-variant-numeric:tabular-nums;color:#35816a}
-    button[${currentMarker}][data-level="watch"] .context-lens-current-value,button[${currentMarker}][data-level="watch"] .context-lens-current-hint{color:#ae771d}
-    button[${currentMarker}][data-level="high"] .context-lens-current-value,button[${currentMarker}][data-level="high"] .context-lens-current-hint{color:#b7473b}
-    button[${currentMarker}] .context-lens-current-track{width:94px;height:5px;flex:none;border-radius:5px;background:light-dark(#dce1e3,#4b4f56);overflow:hidden}
-    button[${currentMarker}] .context-lens-current-fill{display:block;height:100%;border-radius:5px;background:#35816a}
-    button[${currentMarker}][data-level="watch"] .context-lens-current-fill{background:#ae771d}
-    button[${currentMarker}][data-level="high"] .context-lens-current-fill{background:#b7473b}
-    button[${currentMarker}] .context-lens-current-hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
-    @media(max-width:520px){button[${currentMarker}] .context-lens-current-track{width:50px}button[${currentMarker}] .context-lens-current-hint{max-width:120px}}
+    button[${currentMarker}]{--context-lens-accent:#418b75;--context-lens-progress:0%;display:inline-flex;align-items:center;justify-content:center;gap:6px;width:105px;height:26px;min-height:26px;margin:0 6px 0 0;padding:0 5px;border:0;border-radius:5px;background:transparent;color:var(--color-text-tertiary,light-dark(#858e91,#a5adb0));font:inherit;font-size:12px;line-height:1;white-space:nowrap;flex:none;cursor:pointer}
+    button[${currentMarker}]:hover,button[${currentMarker}]:focus-visible,button[${currentMarker}][aria-expanded="true"]{background:color-mix(in srgb,currentColor 8%,transparent)}
+    button[${currentMarker}] .context-lens-current-ring{position:relative;width:16px;height:16px;border-radius:50%;flex:none;background:conic-gradient(var(--context-lens-accent) var(--context-lens-progress),light-dark(#dfe4e4,#4b5154) 0)}
+    button[${currentMarker}] .context-lens-current-ring::after{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--color-background-primary,light-dark(#fff,#26282d))}
+    button[${currentMarker}] .context-lens-current-value{font-weight:700;font-variant-numeric:tabular-nums;color:var(--context-lens-accent)}
+    button[${currentMarker}][data-level="unknown"]{--context-lens-accent:light-dark(#9da5a8,#929a9e)}
+    button[${currentMarker}][data-level="watch"]{--context-lens-accent:#ae771d}
+    button[${currentMarker}][data-level="high"]{--context-lens-accent:#b7473b}
+    button[${currentMarker}][data-level="high"] .context-lens-current-value::after{content:"!";margin-left:2px}
+    @media(max-width:520px){button[${currentMarker}]{width:52px;margin-right:4px}button[${currentMarker}] .context-lens-current-label{display:none}}
   `;
   document.head.append(buttonStyle);
   let state = { sessionId: null, viewToken: null, turns: [] }, activeButton = null, pinned = false;
@@ -163,6 +161,29 @@
     button?.remove();
     currentAnchor = 'none';
   }
+  function currentToolbarSlot(editor) {
+    for (let root = editor.parentElement, depth = 0; root && depth < 5; root = root.parentElement, depth++) {
+      const buttons = Array.from(root.querySelectorAll('button')).filter(node => visible(node) && !node.hasAttribute(marker) && !node.hasAttribute(currentMarker));
+      if (buttons.length < 2) continue;
+      const right = node => { const rect = node.getBoundingClientRect(); return rect.right ?? rect.left + rect.width; };
+      const send = buttons.reduce((best, node) => right(node) > right(best) ? node : best);
+      const sendRect = send.getBoundingClientRect();
+      const model = buttons.filter(node => {
+        if (node === send) return false;
+        const rect = node.getBoundingClientRect();
+        return right(node) <= sendRect.left + 10 && sendRect.left - right(node) <= 160 &&
+          Math.abs((rect.top + rect.bottom) / 2 - (sendRect.top + sendRect.bottom) / 2) <= 30;
+      }).sort((a, b) => right(b) - right(a))[0];
+      if (!model) continue;
+      let row = model.parentElement;
+      while (row && !row.contains(send)) row = row.parentElement;
+      if (!row || row.contains(editor)) continue;
+      let before = model;
+      while (before.parentElement !== row) before = before.parentElement;
+      return { row, before };
+    }
+    return null;
+  }
   function mountCurrent(view) {
     const candidates = Array.from(document.querySelectorAll('[data-conversation-id]')).filter(visible);
     const normalize = id => String(id || '').replace(/^local:/, '');
@@ -171,37 +192,35 @@
     const editors = Array.from(document.querySelectorAll('[contenteditable], textarea, [role="textbox"]'))
       .filter(node => visible(node) && node.getAttribute('contenteditable') !== 'false')
       .filter(node => { const rect = node.getBoundingClientRect(); return rect.width >= 180 && rect.bottom > innerHeight / 2; });
-    const editor = !composer && (view.activeThreadId || view.visibleTurnIds.length) ? editors.at(-1) : null;
+    const editor = composer ? editors.find(node => composer === node || composer.contains(node)) :
+      (view.activeThreadId || view.visibleTurnIds.length) ? editors.at(-1) : null;
     const context = state.currentContext;
-    if (!composer && !editor) { currentReason = 'no_composer'; clearCurrent(); return; }
-    const host = editor ? (editor.closest('form') || editor.parentElement) :
-      composer.getAttribute('contenteditable') !== null || ['TEXTAREA', 'INPUT'].includes(composer.tagName)
-        ? composer.parentElement : (composer.querySelector('form') || composer);
-    if (!host) { currentReason = 'no_composer'; clearCurrent(); return; }
+    if (!editor) { currentReason = 'no_composer'; clearCurrent(); return; }
+    const slot = currentToolbarSlot(editor);
+    if (!slot) { currentReason = 'no_toolbar'; clearCurrent(); return; }
     let button = document.querySelector(`[${currentMarker}]`);
-    if (button && button.parentElement !== host) { clearCurrent(); button = null; }
+    if (button && button.parentElement !== slot.row) { clearCurrent(); button = null; }
     if (!button) {
       button = document.createElement('button'); button.type = 'button'; button.setAttribute(currentMarker, '');
       button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-label', '查看当前会话上下文用量');
-      const main = el('span', 'context-lens-current-main'), label = el('span', '', '上下文');
-      const value = el('span', 'context-lens-current-value'), track = el('span', 'context-lens-current-track');
-      track.append(el('span', 'context-lens-current-fill'));
-      main.append(label, value, track);
-      button.append(main, el('span', 'context-lens-current-hint'));
+      const ring = el('span', 'context-lens-current-ring'); ring.setAttribute('aria-hidden', 'true');
+      button.append(ring, el('span', 'context-lens-current-label', '上下文'), el('span', 'context-lens-current-value'));
       button.addEventListener('click', event => { event.stopPropagation(); if (activeButton === button && pinned) hide(); else { pinned = true; show(button); } });
-      host.append(button);
     }
+    if (button.nextElementSibling !== slot.before) slot.row.insertBefore(button, slot.before);
     const known = context && context.used != null && context.capacity > 0;
     const used = known ? Math.min(100, Math.max(0, context.used / context.capacity * 100)) : 0;
     const level = !known ? 'unknown' : used >= 85 ? 'high' : used >= 70 ? 'watch' : 'normal';
     button.setAttribute('data-level', level);
     button.dataset.sessionId = state.sessionId || '';
+    button.style.setProperty('--context-lens-progress', `${used}%`);
     button.querySelector('.context-lens-current-value').textContent = known ? `${used.toFixed(0)}%` : '—';
-    button.querySelector('.context-lens-current-fill').style.width = `${used}%`;
-    button.querySelector('.context-lens-current-hint').textContent = level === 'unknown' ? '等待用量' :
-      level === 'high' ? '建议压缩或新会话' : level === 'watch' ? `剩余 ${Math.round(100 - used)}%` : '空间充足';
+    const description = level === 'unknown' ? '等待用量' : level === 'high' ? '建议压缩或新开会话' :
+      `已使用 ${used.toFixed(0)}%，剩余 ${Math.round(100 - used)}%`;
+    button.title = `上下文${description}，点击查看明细`;
+    button.setAttribute('aria-label', button.title);
     currentReason = known ? 'mounted' : 'waiting_for_usage';
-    currentAnchor = editor ? 'editor' : 'conversation_id';
+    currentAnchor = 'toolbar';
   }
   function scan() {
     scanTimer = null;

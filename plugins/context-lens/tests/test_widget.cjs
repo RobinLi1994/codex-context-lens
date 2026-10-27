@@ -7,7 +7,8 @@ const path = require('node:path');
 
 class Element {
   constructor(tag) {
-    this.tag = tag; this.attrs = new Map(); this.children = []; this.style = {}; this.events = {};
+    this.tag = tag; this.attrs = new Map(); this.children = [];
+    this.style = { setProperty(name, value) { this[name] = value; } }; this.events = {};
     this.dataset = new Proxy({}, { get: (_, key) => this.getAttribute('data-' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase())),
       set: (_, key, value) => { this.setAttribute('data-' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase()), value); return true; } });
   }
@@ -17,12 +18,14 @@ class Element {
   get textContent() { return (this.text || '') + this.children.map(n => n.textContent).join(''); }
   setAttribute(key, value) { this.attrs.set(key, String(value)); }
   getAttribute(key) { return this.attrs.has(key) ? this.attrs.get(key) : null; }
+  hasAttribute(key) { return this.attrs.has(key); }
   removeAttribute(key) { this.attrs.delete(key); }
   matches(selector) {
     return selector.split(',').some(raw => {
       const s = raw.trim();
       if (s[0] === '#') return this.id === s.slice(1);
       if (s[0] === '.') return this.className.split(/\s+/).includes(s.slice(1));
+      if (s.toLowerCase() === this.tag.toLowerCase()) return true;
       const attrs = [...s.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)];
       return attrs.length > 0 && attrs.every(([, key, value]) => this.attrs.has(key) && (value === undefined || this.getAttribute(key) === value));
     });
@@ -57,7 +60,13 @@ function fixture(id, turns, hiddenTurns = []) {
   const composer = new Element('div'); composer.setAttribute('data-conversation-id', 'local:' + id);
   const editor = new Element('div'); editor.setAttribute('contenteditable', 'true');
   editor.rect = { left: 10, top: 700, bottom: 724, width: 420, height: 24 };
-  composer.append(editor); body.append(composer);
+  const toolbar = new Element('div'), controls = new Element('div');
+  const add = new Element('button'), model = new Element('button'), send = new Element('button');
+  add.rect = { left: 10, top: 740, bottom: 768, width: 28, height: 28 };
+  model.rect = { left: 300, top: 740, bottom: 768, width: 60, height: 28 };
+  send.rect = { left: 395, top: 740, bottom: 768, width: 28, height: 28 };
+  controls.append(model, send); toolbar.append(add, controls);
+  composer.append(editor, toolbar); body.append(composer);
   function replies(container, ids) {
     for (const turn of ids) {
       const wrapper = new Element('article'); wrapper.className = 'group'; wrapper.setAttribute('data-turn-key', 'local-marker-' + turn);
@@ -77,7 +86,7 @@ function fixture(id, turns, hiddenTurns = []) {
   context.window = context;
   vm.createContext(context);
   for (const file of ['matching.js', 'overlay.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../web', file), 'utf8'), context);
-  return { api: context.__codexContextLens, doc, sidebar, composer, requests,
+  return { api: context.__codexContextLens, doc, sidebar, composer, toolbar, controls, model, requests,
     switch(id, ids) { sidebar.setAttribute('data-app-action-sidebar-thread-id', 'local:' + id); composer.setAttribute('data-conversation-id', 'local:' + id); chat.replaceChildren(); replies(chat, ids); } };
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 100));
@@ -87,22 +96,25 @@ function payload(f, sessionId, ids) {
     turns: ids.map(turn_id => ({ turn_id, completed: true, used: 100, capacity: 1000 })) };
 }
 
-test('composer footer stays visible and escalates at 70% and 85%', async t => {
+test('current usage stays inline before the model and escalates at 70% and 85%', async t => {
   const f = fixture('draft', ['one']); t.after(() => f.api.dispose());
   const data = payload(f, 'chat', ['one']);
   f.api.update(data); await tick();
-  const footer = f.doc.querySelector('[data-context-lens-current]');
-  assert.ok(footer);
-  assert.equal(footer.parentElement, f.composer);
-  assert.match(footer.textContent, /上下文10%/);
-  assert.equal(footer.dataset.level, 'normal');
+  const indicator = f.doc.querySelector('[data-context-lens-current]');
+  assert.ok(indicator);
+  assert.equal(indicator.parentElement, f.controls);
+  assert.equal(indicator.nextElementSibling, f.model);
+  assert.match(indicator.textContent, /上下文10%/);
+  assert.equal(indicator.dataset.level, 'normal');
+  assert.equal(indicator.style['--context-lens-progress'], '10%');
 
   f.api.update({ ...data, currentContext: { used: 740, capacity: 1000, percent: 74 } }); await tick();
-  assert.match(footer.textContent, /上下文74%/);
-  assert.equal(footer.dataset.level, 'watch');
+  assert.match(indicator.textContent, /上下文74%/);
+  assert.equal(indicator.dataset.level, 'watch');
   f.api.update({ ...data, currentContext: { used: 880, capacity: 1000, percent: 88 } }); await tick();
-  assert.equal(footer.dataset.level, 'high');
-  assert.match(footer.textContent, /建议压缩或新会话/);
+  assert.equal(indicator.dataset.level, 'high');
+  assert.match(indicator.title, /建议压缩或新开会话/);
+  assert.equal(indicator.nextElementSibling, f.model);
 });
 
 test('composer footer opens current report and clears on a chat switch', async t => {
@@ -126,20 +138,28 @@ test('new chat shows a waiting placeholder until its usage arrives', async t => 
   const footer = f.doc.querySelector('[data-context-lens-current]');
   assert.ok(footer);
   assert.equal(footer.dataset.level, 'unknown');
-  assert.match(footer.textContent, /等待用量/);
+  assert.match(footer.title, /等待用量/);
   f.api.update({ ...waiting, sessionId: 'chat', currentContext: { used: 100, capacity: 1000, percent: 10 } }); await tick();
   assert.equal(footer.dataset.level, 'normal');
   assert.match(footer.textContent, /10%/);
 });
 
-test('visible bottom editor anchors current footer when composer id is absent', async t => {
+test('visible bottom editor anchors current usage in the toolbar when composer id is absent', async t => {
   const f = fixture('draft', ['one']); t.after(() => f.api.dispose());
   f.composer.removeAttribute('data-conversation-id');
   f.api.update(payload(f, 'chat', ['one'])); await tick();
   const footer = f.doc.querySelector('[data-context-lens-current]');
   assert.ok(footer);
-  assert.equal(footer.parentElement, f.composer);
-  assert.equal(f.api.status().currentAnchor, 'editor');
+  assert.equal(footer.parentElement, f.controls);
+  assert.equal(f.api.status().currentAnchor, 'toolbar');
+});
+
+test('missing toolbar leaves the composer unchanged', async t => {
+  const f = fixture('draft', ['one']); t.after(() => f.api.dispose());
+  f.toolbar.remove();
+  f.api.update(payload(f, 'chat', ['one'])); await tick();
+  assert.equal(f.doc.querySelector('[data-context-lens-current]'), null);
+  assert.equal(f.api.status().currentReason, 'no_toolbar');
 });
 
 test('draft-only page mounts both completed replies using real session UUID', async t => {
